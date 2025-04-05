@@ -8,43 +8,40 @@ on:
     paths:
       - 'Packages/*/package.json'
 
-env:
-  PACKAGE_PATH: Packages/${{ vars.PACKAGE_NAME }}
-
 jobs:
   check:
     runs-on: ubuntu-latest
     outputs:
       build: ${{ steps.variables.outputs.valid == 'true' && steps.tag.outputs.exists == 'false' }}
       version: ${{ steps.package.outputs.version }}
-      skip-dispatch: ${{ steps.variables.outputs.skip-dispatch }}
+      name: ${{ steps.variables.outputs.name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Validate Variables
+      - name: Validate Metadata
         id: variables
         run: |
-          if [ "${{ vars.PACKAGE_NAME }}" != "" ]; then
-            echo "valid=true" >> $GITHUB_OUTPUT;
-          else
+          if [ ! -f "${{ github.workspace }}/metadata.json" ]; then
             echo "valid=false" >> $GITHUB_OUTPUT;
+            exit 0
           fi
 
-          if [ "${{ vars.LISTING_REPOSITORY }}" == "" ]; then
-            echo "skip-dispatch=true" >> $GITHUB_OUTPUT;
-          elif [ "${{ vars.SKIP_DISPATCH }}" != "" ]; then
-            echo "skip-dispatch=true" >> $GITHUB_OUTPUT;
-          else
-            echo "skip-dispatch=false" >> $GITHUB_OUTPUT;
+          export PACKAGE_NAME=$(jq -r '.name' "${{ github.workspace }}/metadata.json")
+          if [ "$PACKAGE_NAME" = "null" ]; then
+            echo "valid=false" >> $GITHUB_OUTPUT;
+            exit 0
           fi
+
+          echo "name=$PACKAGE_NAME" >> $GITHUB_OUTPUT;
+          echo "valid=true" >> $GITHUB_OUTPUT;
 
       - name: Load Package
         if: steps.variables.outputs.valid == 'true'
         id: package
         uses: zoexx/github-action-json-file-properties@b9f36ce6ee6fe2680cd3c32b2c62e22eade7e590
         with:
-            file_path: "${{ env.PACKAGE_PATH }}/package.json"
+            file_path: "Packages/${{ steps.variables.outputs.name }}/package.json"
 
       - name: Tag Exist Check
         if: steps.variables.outputs.valid == 'true'
@@ -60,9 +57,10 @@ jobs:
     permissions:
       contents: write
     env:
-      ZIP_FILE: ${{ vars.PACKAGE_NAME }}-${{ needs.check.outputs.version }}.zip
-      UNITY_PACKAGE: ${{ vars.PACKAGE_NAME }}-${{ needs.check.outputs.version }}.unitypackage
+      ZIP_FILE: ${{ needs.check.outputs.name }}-${{ needs.check.outputs.version }}.zip
+      UNITY_PACKAGE: ${{ needs.check.outputs.name }}-${{ needs.check.outputs.version }}.unitypackage
       VERSION: ${{ needs.check.outputs.version }}
+      PACKAGE_PATH: Packages/${{ needs.check.outputs.name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -92,7 +90,6 @@ jobs:
 
       - name: Repository Dispatch
         uses: peter-evans/repository-dispatch@v3
-        if: needs.check.outputs.skip-dispatch == 'false'
         with:
           token: ${{ secrets.VPM_DISPATCH_TOKEN }}
           repository: ${{ vars.LISTING_REPOSITORY }}
